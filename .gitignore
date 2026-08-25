@@ -11,4 +11,5 @@ venv/
 tests/fixtures/*.pdf
 test files/
 parse-output/
+parse-output-mcp/
 .DS_Store
