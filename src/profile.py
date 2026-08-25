@@ -331,6 +331,15 @@ class Profile:
         checks.append({"check": "no_overlong_rows", "passed": overlong == 0,
                        "count": overlong})
 
+        # A rejoined cell is a reconstruction. Every line of it except the last
+        # must reach the column edge, or it did not overflow and the join
+        # merged two unrelated values -- which still cross-foots.
+        suspect_wraps = getattr(table, "suspect_wraps", [])
+        checks.append({"check": "wrapped_cells_reach_column_edge",
+                       "passed": not suspect_wraps,
+                       "count": len(suspect_wraps),
+                       "sample": suspect_wraps[:5]})
+
         # A column present on the page but absent from the profile has its
         # content absorbed into a neighbouring cell. Arithmetic may still
         # foot, so this must fail loudly rather than pass quietly.

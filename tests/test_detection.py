@@ -59,5 +59,30 @@ ok.append(check("summary disagrees", base(), summary={"buckets":{"Balance Due":-
 r = base(); r[2]["posting_date"] = None
 ok.append(check("missing required field", r, expect_fail="required_fields"))
 
+# 8. Two unrelated values joined into one reference. Arithmetic is perfect and
+#    the shape check passes -- only the geometry shows the first line stopped
+#    well short of the column edge, so it never overflowed.
+from src.layout import Word, Row, Column, check_wraps
+
+REF = "BP Ref. No."
+cols = [Column(name=REF, x0=124.0, x1=163.0, left=113.7, right=169.9)]
+def _row(cells, words):
+    return Row(cells=cells, cell_words={REF: words}, page=0)
+
+full = _row({REF: "SI/08781/CN/00007"}, [
+    Word("SI/08781/CN/", 124.0, 176.0, 280.0, 289.0, 0, 8.0),   # reaches edge
+    Word("00007", 124.0, 145.0, 290.0, 299.0, 0, 8.0),
+])
+short = _row({REF: "SI/0878100007"}, [
+    Word("SI/08781", 124.0, 150.0, 300.0, 309.0, 0, 8.0),       # stops short
+    Word("00007", 124.0, 145.0, 310.0, 319.0, 0, 8.0),
+])
+clean_wraps = check_wraps([full], cols, 8.0)
+caught = check_wraps([full, short], cols, 8.0)
+hit = not clean_wraps and len(caught) == 1 and caught[0]["row"] == 2
+print(f"{'PASS' if hit else 'FAIL'}  {'joined two separate values':34s} -> "
+      f"{'geometry caught row 2' if hit else caught}")
+ok.append(hit)
+
 print("\nAll green." if all(ok) else f"\n{ok.count(False)} check(s) did not fire.")
 sys.exit(0 if all(ok) else 1)

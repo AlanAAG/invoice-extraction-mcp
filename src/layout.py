@@ -184,6 +184,7 @@ class TableResult:
     column_fill: dict[str, float]
     geometry: list[dict[str, Any]]
     warnings: list[str]
+    suspect_wraps: list[dict[str, Any]] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -429,6 +430,61 @@ def refine_bands(lines: list[Line], cols: list[Column]) -> list[str]:
         moved.append(f"{cols[i - 1].name}|{cols[i].name}: "
                      f"{round(edge, 1)} -> {round(new_edge, 1)}")
     return moved
+
+
+def check_wraps(rows: list[Row], cols: list[Column],
+                glyph_size: float) -> list[dict[str, Any]]:
+    """
+    Prove each rejoined cell really was a column overflow.
+
+    Joining two lines into one value is a reconstruction, and a wrong one is
+    invisible downstream: a mangled reference still cross-foots. The signature
+    of a true overflow is that the line ran out of room, so every line of a
+    wrapped cell except the last must reach the column's right edge. A line
+    that stopped short did not overflow, so the text below it is a different
+    value and must not be appended.
+    """
+    # One glyph of slack: a line also breaks when the NEXT character is too
+    # wide to fit, which leaves a gap without meaning the cell did not wrap.
+    slack = max(glyph_size * 0.8, 1.0)
+    edges = {c.name: max((w.x1 for r in rows for w in r.cell_words.get(c.name, [])),
+                         default=0.0)
+             for c in cols}
+
+    suspect = []
+    for i, row in enumerate(rows):
+        for name, words in row.cell_words.items():
+            if not words:
+                continue
+            # Only identifier-like cells. Prose wraps with a ragged right edge
+            # by design, so "did it reach the edge" says nothing about it.
+            if " " in row.cells.get(name, "").strip():
+                continue
+            # A cell stitched across a page break broke because the PAGE ran
+            # out, not the column, so it is under no obligation to reach the
+            # right edge.
+            if len({w.page for w in words}) > 1:
+                continue
+            by_line: dict[float, list[Word]] = {}
+            for w in words:
+                by_line.setdefault(round(w.top, 1), []).append(w)
+            if len(by_line) < 2:
+                continue
+            tops = sorted(by_line)
+            for top in tops[:-1]:
+                reach = max(w.x1 for w in by_line[top])
+                gap = edges[name] - reach
+                if gap > slack:
+                    suspect.append({
+                        "row": i + 1,
+                        "column": name,
+                        "line_top": top,
+                        "line_ends_at": round(reach, 1),
+                        "column_edge": round(edges[name], 1),
+                        "gap": round(gap, 1),
+                        "joined_value": row.cells.get(name, ""),
+                    })
+    return suspect
 
 
 def assign(line: Line, cols: list[Column]) -> dict[str, list[Word]]:
@@ -750,6 +806,16 @@ def parse_table(pdf_path: str, header_spec: list[str], *,
             n = sum(1 for r in all_rows if r.cells.get(c.name))
             fill[c.name] = round(n / len(all_rows), 3)
 
+    median_glyph = statistics.median(
+        [g["median_font_size"] for g in geometry if g.get("median_font_size")]
+    ) if geometry else 0.0
+    suspect_wraps = check_wraps(all_rows, columns, median_glyph)
+    if suspect_wraps:
+        warnings.append(
+            f"{len(suspect_wraps)} wrapped cell(s) do not reach the column "
+            f"edge; the join may have merged two separate values."
+        )
+
     return TableResult(
         rows=all_rows,
         columns=columns,
@@ -765,6 +831,7 @@ def parse_table(pdf_path: str, header_spec: list[str], *,
         column_fill=fill,
         geometry=geometry,
         warnings=warnings,
+        suspect_wraps=suspect_wraps,
     )
 
 
