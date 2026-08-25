@@ -97,6 +97,9 @@ class Word:
     bottom: float
     page: int
     size: float = 0.0
+    # Per-glyph (x0, x1), kept so a word that turns out to span two columns can
+    # be cut at a real glyph gap rather than at a guessed character offset.
+    chars: tuple[tuple[float, float], ...] = ()
 
     @property
     def cx(self) -> float:
@@ -205,10 +208,11 @@ def measure_page(page, page_number: int) -> tuple[PageGeometry, list[Word]]:
     dupes = before - len(page.chars)
 
     raw = page.extract_words(use_text_flow=False, keep_blank_chars=False,
-                             extra_attrs=["size"])
+                             extra_attrs=["size"], return_chars=True)
     words = [
         Word(w["text"], w["x0"], w["x1"], w["top"], w["bottom"],
-             page_number, float(w.get("size") or 0.0))
+             page_number, float(w.get("size") or 0.0),
+             tuple((c["x0"], c["x1"]) for c in w.get("chars") or ()))
         for w in raw
     ]
     words.sort(key=lambda w: (w.top, w.x0))
@@ -337,6 +341,94 @@ def build_columns(header_line: Line, header_spec: list[str],
 
     unmapped = [c.text for c in cells if id(c) not in matched]
     return cols, unmapped
+
+
+# A cell that ends flush against the next column leaves a gap narrower than
+# pdfplumber's word tolerance (~3pt at 8pt type), so the two cells arrive glued
+# into one word: "FC-SIN-26/119" + "30.04.26" -> "FC-SIN-26/11930.04.26".
+# Real inter-glyph gaps inside a word are 0, so anything above this is a space.
+MIN_GLYPH_GAP = 0.8
+
+
+def split_straddling_words(lines: list[Line], cols: list[Column]) -> int:
+    """
+    Cut words that span a column boundary at an internal glyph gap.
+
+    Only words that actually cross a band edge are touched, so a document
+    whose columns are cleanly separated is left exactly as it was.
+    """
+    edges = [c.left for c in cols[1:]]
+    if not edges:
+        return 0
+    split_count = 0
+    for line in lines:
+        out: list[Word] = []
+        for w in line.words:
+            pieces = _split_word(w, edges)
+            split_count += len(pieces) - 1
+            out.extend(pieces)
+        line.words = out
+    return split_count
+
+
+def _split_word(w: Word, edges: list[float]) -> list[Word]:
+    if len(w.chars) < 2 or not any(w.x0 < e < w.x1 for e in edges):
+        return [w]
+    cuts = [i for i in range(1, len(w.chars))
+            if w.chars[i][0] - w.chars[i - 1][1] >= MIN_GLYPH_GAP]
+    if not cuts:
+        return [w]                      # genuinely one word; leave it alone
+    pieces, start = [], 0
+    for cut in cuts + [len(w.chars)]:
+        text = w.text[start:cut]
+        if not text.strip():
+            start = cut
+            continue
+        pieces.append(Word(text, w.chars[start][0], w.chars[cut - 1][1],
+                           w.top, w.bottom, w.page, w.size,
+                           w.chars[start:cut]))
+        start = cut
+    return pieces or [w]
+
+
+def refine_bands(lines: list[Line], cols: list[Column]) -> list[str]:
+    """
+    Move a band edge that still cuts through a word into real whitespace.
+
+    Edges start at the midpoint between header labels, which assumes the data
+    sits under its own label. A wide prose column breaks that: 'Details' text
+    overhangs far enough right to cross into 'Amount', and the amount is then
+    lost. The columns' own content shows where the true corridor is.
+    """
+    spans = sorted((w.x0, w.x1) for line in lines for w in line.words)
+    if not spans:
+        return []
+    covered: list[list[float]] = []
+    for x0, x1 in spans:
+        if covered and x0 <= covered[-1][1]:
+            covered[-1][1] = max(covered[-1][1], x1)
+        else:
+            covered.append([x0, x1])
+
+    moved = []
+    for i in range(1, len(cols)):
+        edge = cols[i].left
+        if not any(a < edge < b for a, b in covered):
+            continue                    # already in clear space
+        gaps = [(covered[j][1], covered[j + 1][0])
+                for j in range(len(covered) - 1)
+                if covered[j + 1][0] - covered[j][1] > 0]
+        if not gaps:
+            continue
+        lo, hi = min(gaps, key=lambda g: abs((g[0] + g[1]) / 2 - edge))
+        new_edge = (lo + hi) / 2
+        # Never reorder columns.
+        if not (cols[i - 1].left < new_edge < cols[i].right):
+            continue
+        cols[i - 1].right = cols[i].left = new_edge
+        moved.append(f"{cols[i - 1].name}|{cols[i].name}: "
+                     f"{round(edge, 1)} -> {round(new_edge, 1)}")
+    return moved
 
 
 def assign(line: Line, cols: list[Column]) -> dict[str, list[Word]]:
@@ -566,6 +658,25 @@ def parse_table(pdf_path: str, header_spec: list[str], *,
                 body = lines
                 pages_without_repeated_header.append(pno)
 
+            # Repair column geometry from the data itself before assigning.
+            # Restricted to the rows above the stop line, so the ageing table
+            # and the page footer cannot drag a band edge around.
+            region = body
+            if stop_pattern:
+                for k, ln in enumerate(body):
+                    if re.match(stop_pattern, ln.text.strip()):
+                        region = body[:k]
+                        break
+            splits = split_straddling_words(region, cols)
+            moved = refine_bands(region, cols)
+            if moved:
+                # Edges shifted, so a word may straddle a boundary it did not
+                # cross before.
+                splits += split_straddling_words(region, cols)
+            for m in moved:
+                warnings.append(f"page {pno}: column edge moved into "
+                                f"whitespace ({m})")
+
             if not columns:
                 columns = cols
 
@@ -595,6 +706,7 @@ def parse_table(pdf_path: str, header_spec: list[str], *,
                 "median_font_size": round(geom.median_font_size, 2),
                 "y_tolerance": geom.y_tolerance,
                 "duplicate_glyphs_removed": geom.duplicate_glyphs_removed,
+                "words_split_at_column_edge": splits,
                 "columns": [{"name": c.name,
                              "band": [round(c.left, 1), round(c.right, 1)]}
                             for c in cols],

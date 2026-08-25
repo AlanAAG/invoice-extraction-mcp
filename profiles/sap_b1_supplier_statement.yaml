@@ -27,9 +27,11 @@ metadata:
     pattern: 'BP:\s*From\s+(\S+)'
     type: text
   supplier_name:
-    # Crystal renders the BP code on the same visual line as the name.
-    # Suffix may be parenthesised: "NAZIH TRADING CO.(LLC)".
-    pattern: '^([A-Z0-9][A-Z0-9 .,&\-]{4,}(?:\(?(?:L\.L\.C\.|LLC|FZE|LTD|LIMITED)\)?|CO\.?\s*\(?(?:L\.L\.C\.|LLC)?\)?))\.?$'
+    # Crystal renders the BP code on the same visual line as the name, and it
+    # is the only line that starts with the code. Anchoring there beats
+    # matching legal suffixes, which kept failing on real names:
+    # "NAZIH TRADING CO.(LLC)", "L'OREAL ...", "VALENCIA ... (CASINOVA FZE)".
+    pattern: '^(S\d{3,}\s+\S.*?)\s*$'
     type: text
     strip_prefix_field: supplier_code
   currency:

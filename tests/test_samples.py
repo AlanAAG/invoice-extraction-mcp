@@ -15,6 +15,23 @@ EXPECTED = {
     "SYSTEM_SIDE_-_Nazih_SOA_24_09_25.pdf": {
         "supplier": "NAZIH TRADING CO.(LLC)", "phone": "97126777122", "rows": 8,
         "closing": -13897.050, "first_ref": "9000395933/9300073415", "wrapped": 2},
+    # Apostrophe in the supplier name.
+    "SYSTEM_SIDE_-_Loreal_SOA_20_06_25.pdf": {
+        "supplier": "L'OREAL UAE GENERAL TRADING LLC", "phone": "97142749400",
+        "rows": 7, "closing": -1217839.140, "first_ref": "9004246804",
+        "wrapped": 2},
+    # 'Details' prose overhangs into the Amount band; the edge must move into
+    # whitespace or every amount comes back null.
+    "SYSTEM_SIDE_-_Oasis_SOA_19_04_26.pdf": {
+        "supplier": "OASIS PURE WATER COMPANY LLC", "phone": "97125582808",
+        "rows": 2, "closing": -3752.560, "first_ref": "1791380226/01",
+        "wrapped": 2},
+    # Reference sits flush against the posting date, so pdfplumber glues them
+    # into one word; it must be cut at the glyph gap.
+    "SYSTEM_SIDE_-_Valencia_SOA_27_07_26.pdf": {
+        "supplier": "VALENCIA COSMETIC TRDNG.(CASINOVA FZE)",
+        "phone": "97165312311", "rows": 6, "closing": -6982.500,
+        "first_ref": "FC-SIN-26/119697", "wrapped": 6},
 }
 FIXTURES = pathlib.Path(__file__).resolve().parent / "fixtures"
 BASE = pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else FIXTURES
