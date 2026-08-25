@@ -1,0 +1,11 @@
+.env
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+
+# Real statements are financial data; keep them out of git history.
+tests/fixtures/*.pdf
+.DS_Store

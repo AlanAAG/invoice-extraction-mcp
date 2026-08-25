@@ -1,0 +1,7 @@
+# Test dependencies. Not needed to run the server.
+#   pip install -r requirements.txt -r requirements-dev.txt
+-r requirements.txt
+
+# Synthesises the PDFs used by test_adversarial / test_robustness /
+# test_multipage. The server itself never generates PDFs.
+reportlab>=4.0
