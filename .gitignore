@@ -7,5 +7,8 @@ venv/
 .pytest_cache/
 
 # Real statements are financial data; keep them out of git history.
+# Same for anything derived from them -- parsed output carries the balances.
 tests/fixtures/*.pdf
+test files/
+parse-output/
 .DS_Store

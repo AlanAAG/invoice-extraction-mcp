@@ -28,7 +28,8 @@ metadata:
     type: text
   supplier_name:
     # Crystal renders the BP code on the same visual line as the name.
-    pattern: '^([A-Z0-9][A-Z0-9 .,&()\-]{4,}(?:L\.L\.C\.|LLC|FZE|LTD|LIMITED|CO\.?))\.?$'
+    # Suffix may be parenthesised: "NAZIH TRADING CO.(LLC)".
+    pattern: '^([A-Z0-9][A-Z0-9 .,&\-]{4,}(?:\(?(?:L\.L\.C\.|LLC|FZE|LTD|LIMITED)\)?|CO\.?\s*\(?(?:L\.L\.C\.|LLC)?\)?))\.?$'
     type: text
     strip_prefix_field: supplier_code
   currency:
@@ -43,7 +44,9 @@ metadata:
     type: date
     format: DMY_DOT
   phone:
-    pattern: 'Phone #:\s*(\+?[\d ]+)'
+    # extract_metadata strips space before ':' and '#', so "Phone #:" arrives
+    # as "Phone#:". \s* matches either form.
+    pattern: 'Phone\s*#:\s*(\+?[\d ]+)'
     type: text
   credit_limit:
     pattern: 'Credit Limit:\s*([\d,.]+)'

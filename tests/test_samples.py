@@ -6,11 +6,15 @@ from src.pipeline import fetch, extract, PipelineError
 
 EXPECTED = {
     "SYSTEM_SIDE_-_One_world_SOA_11_07_25.pdf": {
-        "supplier": "ONE WORLD TRADING L.L.C.", "rows": 5,
+        "supplier": "ONE WORLD TRADING L.L.C.", "phone": "97145588567", "rows": 5,
         "closing": -69966.750, "first_ref": "SI/08781/CN/00007", "wrapped": 1},
     "SYSTEM_SIDE_-_Nutripharm_SOA_19_04_24.pdf": {
-        "supplier": "NUTRIPHARM LLC", "rows": 4,
+        "supplier": "NUTRIPHARM LLC", "phone": "+9714 5610000", "rows": 4,
         "closing": -14095.022, "first_ref": "N-CINV-01999111", "wrapped": 4},
+    # Parenthesised legal suffix -- "CO.(LLC)" broke the supplier_name pattern.
+    "SYSTEM_SIDE_-_Nazih_SOA_24_09_25.pdf": {
+        "supplier": "NAZIH TRADING CO.(LLC)", "phone": "97126777122", "rows": 8,
+        "closing": -13897.050, "first_ref": "9000395933/9300073415", "wrapped": 2},
 }
 FIXTURES = pathlib.Path(__file__).resolve().parent / "fixtures"
 BASE = pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else FIXTURES
@@ -28,6 +32,7 @@ async def main():
         out = extract(await fetch(str(path), "path"), reg, file_name=name)
         got = {
             "supplier": out["metadata"]["supplier_name"],
+            "phone": out["metadata"]["phone"],
             "rows": out["diagnostics"]["rows"],
             "closing": out["line_items"][-1]["running_balance"],
             "first_ref": out["line_items"][0]["bp_reference_no"],
