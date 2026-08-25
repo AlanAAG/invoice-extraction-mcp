@@ -11,8 +11,7 @@ proves an *agent* can actually use it, which is what MagOneAI will be doing.
 ## Level 0 — the suites (30 seconds, no server)
 
 ```bash
-pip install -r requirements.txt
-pip install reportlab                # test-only, synthesises PDFs
+pip install -r requirements.txt -r requirements-dev.txt
 ./scripts/run_tests.sh
 ```
 

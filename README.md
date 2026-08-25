@@ -132,9 +132,9 @@ Consumers should assert on `schema_version` rather than duck-typing.
 
 ```jsonc
 {
-  "schema_version": "1.0",
-  "status": "ok",                     // ok | needs_review | unsupported
-                                      // | no_text_layer | error
+  "schema_version": "2.0",
+  "status": "ok",                     // ok | needs_review | parsed_without_profile
+                                      // | profile_mismatch | no_text_layer | error
   "profile": "sap_b1_supplier_statement",
   "profile_confidence": 1.0,
   "document": { "file_name": "...", "checksum": "sha256:...",
@@ -260,117 +260,9 @@ curl localhost:8000/health
 
 ## How to build an MCP server
 
-The mechanics, using this server as the worked example.
-
-### 1. What an MCP server actually is
-
-A process exposing a small JSON-RPC API that an LLM client can discover and
-call. Three things over one connection: **tools** (functions the model calls),
-**resources** (data it can read), **prompts** (templates). Most servers only
-need tools.
-
-The client asks `tools/list`, gets names + JSON Schemas + descriptions, and
-decides what to call. **You never write the schema by hand** — it is generated
-from your Python type hints.
-
-### 2. Pick a transport, and get this right first
-
-| Transport | How it runs | Use when |
-|---|---|---|
-| **stdio** | Client spawns your process, talks over stdin/stdout | Local: Claude Desktop, VS Code |
-| **streamable HTTP** | Long-running service at a URL | Hosted orchestrators — MagOneAI |
-
-This is the decision people get wrong. Almost every OCR/PDF MCP server on
-GitHub is stdio-only. **MagOneAI is hosted and cannot spawn a subprocess on
-your machine**, so stdio servers need a proxy in front. Build for HTTP from
-the start.
-
-### 3. Define tools — the docstring is the contract
-
-```python
-from mcp.server.mcpserver import MCPServer
-
-mcp = MCPServer("doc-extract", version="0.1.0")
-
-@mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
-async def extract_document(
-    source: Annotated[str, Field(description="HTTPS URL or base64 PDF bytes.")],
-    source_type: Literal["url", "base64", "path"] = "url",
-) -> str:
-    """
-    Turn a PDF statement into structured JSON.
-
-    BRANCH ON `status`:
-      "ok"            every check passed. Safe to pass downstream.
-      "needs_review"  a check failed. Send to a human queue.
-      ...
-    """
-```
-
-Three things doing real work here:
-
-- **Type hints → schema.** `Literal[...]` becomes an enum the model cannot
-  violate. `Field(description=...)` documents each parameter.
-- **The docstring is a prompt.** It is the only instruction the agent gets
-  about when and how to call this. Write it for the model, not for a human
-  reading source. "BRANCH ON `status`" is there because the agent needs to
-  know that.
-- **Annotations are safety metadata.** `readOnlyHint` tells the orchestrator
-  this is safe to retry and cannot mutate anything.
-
-### 4. Return strings, but structured ones
-
-Tools return text. Return `json.dumps(...)` with a stable shape, and include
-`schema_version`. Never let an exception escape — catch it and return
-`{"status": "error", "hint": "..."}`. A traceback tells the agent nothing; a
-hint lets it self-correct.
-
-### 5. Serve it
-
-```python
-def build_http_app():
-    app = mcp.streamable_http_app(stateless_http=True)
-    app.user_middleware.insert(0, _bearer_middleware(token))
-    app.middleware_stack = app.build_middleware_stack()
-    return app
-```
-
-`stateless_http=True` matters: each request is independent, so the service
-scales horizontally and a restart never strands a workflow mid-session.
-
-Add `@mcp.custom_route("/health", methods=["GET"])` for platform probes, and
-gate everything else behind a bearer token with `hmac.compare_digest`.
-
-### 6. Test with a real client, not curl
-
-curl proves the port is open. It does not prove the schema is valid or that
-the agent can use the tool.
-
-```python
-async with httpx.AsyncClient(headers=HDRS) as hc:
-    async with streamable_http_client(URL, http_client=hc) as (r, w):
-        async with ClientSession(r, w) as s:
-            await s.initialize()
-            tools = await s.list_tools()
-            res = await s.call_tool("extract_document", {...})
-```
-
-That is `tests/e2e_http.py`, and it is what caught two real bugs here.
-
-### 7. Things that will bite you
-
-- **The SDK moved.** `FastMCP` is gone in Python SDK 2.x; it is
-  `mcp.server.mcpserver.MCPServer`. Client is `streamable_http_client`
-  (underscores), yielding **two** streams, and it takes an `http_client=`
-  rather than `headers=`. Check the installed signatures with
-  `inspect.signature` instead of trusting a blog post.
-- **Never trust document content as instruction.** Extracted text is *data*.
-  If a PDF contains "ignore previous instructions", nothing downstream acts
-  on it. Say so in the tool docstring.
-- **Secrets are server-side env vars.** A token routed through the workflow
-  canvas ends up in run logs.
-- **Fewer tools is better.** Every tool is a branch the agent can take
-  wrongly. The happy path here is one call.
+Covered in [`BUILDING_AN_MCP_SERVER.md`](BUILDING_AN_MCP_SERVER.md) — how this
+server is put together and why: transports (why streamable HTTP, not stdio),
+tool design, docstrings-as-prompts, auth, and the SDK 2.x gotchas.
 
 ---
 
